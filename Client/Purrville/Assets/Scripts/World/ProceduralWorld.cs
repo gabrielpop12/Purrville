@@ -35,6 +35,7 @@ namespace Purrville.World
         private Vector2Int lastCameraCell = new Vector2Int(int.MinValue, int.MinValue);
         private Vector2Int lastCameraChunk = new Vector2Int(int.MinValue, int.MinValue);
         private float lastCameraSize = -1;
+        private bool lastFogEnabled;
 
         private sealed class ChunkView
         {
@@ -79,9 +80,10 @@ namespace Purrville.World
             generatedRoot = new GameObject("GeneratedWorld");
             generatedRoot.transform.SetParent(transform, false);
             terrainMaterial = new Material(Shader.Find("Sprites/Default"));
-            fogMaterial = new Material(Shader.Find("Sprites/Default"));
-            // Explicit transparent render queue; fog must draw over terrain.
-            fogMaterial.renderQueue = 3100;
+            Shader fogShader = Shader.Find("Purrville/FogOverlay");
+            if (fogShader == null) Debug.LogError("Purrville FogOverlay shader missing!");
+            fogMaterial = new Material(fogShader != null ? fogShader : Shader.Find("Sprites/Default"));
+            lastFogEnabled = fogOfWar;
             for (int y = 0; y < height; y += chunkSize)
             for (int x = 0; x < width; x += chunkSize)
                 BuildChunk(x, y, Mathf.Min(chunkSize, width - x), Mathf.Min(chunkSize, height - y));
@@ -131,7 +133,9 @@ namespace Purrville.World
             chunk.terrainMesh.colors = colors;
             chunk.terrainMesh.RecalculateBounds();
             terrainObject.AddComponent<MeshFilter>().sharedMesh = chunk.terrainMesh;
-            terrainObject.AddComponent<MeshRenderer>().sharedMaterial = terrainMaterial;
+            var terrainRenderer = terrainObject.AddComponent<MeshRenderer>();
+            terrainRenderer.sharedMaterial = terrainMaterial;
+            terrainRenderer.sortingOrder = 0;
 
             chunk.fogMesh = new Mesh { name = "FogMesh" };
             var fogVertices = (Vector3[])vertices.Clone();
@@ -142,7 +146,9 @@ namespace Purrville.World
             chunk.fogMesh.colors = chunk.fogColors;
             chunk.fogMesh.RecalculateBounds();
             fogObject.AddComponent<MeshFilter>().sharedMesh = chunk.fogMesh;
-            fogObject.AddComponent<MeshRenderer>().sharedMaterial = fogMaterial;
+            var fogRenderer = fogObject.AddComponent<MeshRenderer>();
+            fogRenderer.sharedMaterial = fogMaterial;
+            fogRenderer.sortingOrder = 100;
             fogObject.SetActive(fogOfWar);
             chunks.Add(chunk);
         }
@@ -162,6 +168,13 @@ namespace Purrville.World
         {
             if (activeCamera == null) activeCamera = Camera.main;
             if (activeCamera == null || terrain == null) return;
+            if (lastFogEnabled != fogOfWar)
+            {
+                foreach (var chunk in chunks)
+                    if (chunk.root != null && chunk.root.transform.childCount > 1)
+                        chunk.root.transform.GetChild(1).gameObject.SetActive(fogOfWar);
+                lastFogEnabled = fogOfWar;
+            }
             Vector3 local = transform.InverseTransformPoint(activeCamera.transform.position);
             var cell = new Vector2Int(Mathf.RoundToInt(local.x), Mathf.RoundToInt(local.y));
             if (fogOfWar && revealAroundCameraForTesting && cell != lastCameraCell)
