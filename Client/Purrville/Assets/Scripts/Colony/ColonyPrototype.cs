@@ -20,6 +20,7 @@ namespace Purrville.Colony
         private Sprite sprite;
         private int wood, stone, food;
         private float visionTimer;
+        private float resourceVisibilityTimer;
         private bool initialized;
         private Camera cam;
 
@@ -85,6 +86,7 @@ namespace Purrville.Colony
                     positions.Add(new Vector2Int(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y)));
                 }
                 world.RevealFromUnits(positions, visionRadius);
+                UpdateResourceVisibility();
             }
         }
 
@@ -98,6 +100,8 @@ namespace Purrville.Colony
             sprite = Sprite.Create(texture, new Rect(0,0,1,1), new Vector2(.5f,.5f), 1f);
             int cx = world.Width / 2, cy = world.Height / 2;
             if (!FindLand(ref cx, ref cy)) { Debug.LogWarning("No land for colony"); return; }
+            if (cam != null)
+                cam.transform.position = new Vector3(cx, cy, cam.transform.position.z);
             for (int i = 0; i < startingCats; i++)
             {
                 int x = cx + (i % 3) - 1, y = cy + i / 3;
@@ -113,9 +117,22 @@ namespace Purrville.Colony
                 Color color = kind == Kind.Wood ? new Color(.13f,.35f,.13f) :
                     kind == Kind.Stone ? Color.gray : new Color(.9f,.3f,.4f);
                 var obj=MakeSprite(kind+"_"+i,x,y,color,.58f,-.5f);
+                obj.GetComponent<SpriteRenderer>().enabled = false;
                 resources.Add(new Resource {obj=obj,kind=kind});
             }
             Debug.Log("Purrville: cats and harvestable resources spawned.");
+        }
+
+        private void UpdateResourceVisibility()
+        {
+            foreach (var resource in resources)
+            {
+                if (resource.obj == null) continue;
+                Vector3 p = world.transform.InverseTransformPoint(resource.obj.transform.position);
+                int x = Mathf.RoundToInt(p.x), y = Mathf.RoundToInt(p.y);
+                resource.obj.GetComponent<SpriteRenderer>().enabled =
+                    world.GetDiscoveryState(x, y) == DiscoveryState.Visible;
+            }
         }
 
         private bool IsLand(int x,int y)
