@@ -25,7 +25,7 @@ namespace Purrville.Colony
         private bool initialized, buildMode;
         private int wood, stone, food;
         private float visionTimer, jobTimer, storyTimer = 20f;
-        private ColonyStorySystem stories;
+        private CatSocialSystem social;
         private readonly List<CatProfile> profiles = new List<CatProfile>();
         private string latestStory = "Los primeros gatitos llegaron al pueblo.";
         private Vector2Int stockpile;
@@ -86,11 +86,25 @@ namespace Purrville.Colony
             if (Keyboard.current != null && Keyboard.current.hKey.wasPressedThisFrame) showHistory = !showHistory;
             HandleMouse();
             storyTimer -= Time.deltaTime;
-            if (stories != null && storyTimer <= 0f)
+            if (social != null && storyTimer <= 0f)
             {
                 storyTimer = 25f;
-                var story = stories.TryGenerate(profiles);
-                if (story != null) { latestStory = story; Debug.Log("[Purrville Stories] " + story); }
+                var nearby = new List<Cat>();
+                foreach (var cat in cats)
+                    foreach (var other in cats)
+                        if (cat != other && Vector2.Distance(cat.obj.transform.position, other.obj.transform.position) < 3f)
+                        { nearby.Add(cat); break; }
+                if (nearby.Count > 0)
+                {
+                    var first = nearby[UnityEngine.Random.Range(0, nearby.Count)];
+                    foreach (var other in cats)
+                        if (other != first && Vector2.Distance(first.obj.transform.position, other.obj.transform.position) < 3f)
+                        {
+                            latestStory = social.Interact(first.profile, other.profile);
+                            Debug.Log("[Purrville Social] " + latestStory);
+                            break;
+                        }
+                }
             }
             jobTimer -= Time.deltaTime;
             if (automaticJobs && jobTimer <= 0)
@@ -135,7 +149,7 @@ namespace Purrville.Colony
             if (cam != null) cam.transform.position = new Vector3(x,y,cam.transform.position.z);
             MakeSprite("Stockpile",stockpile,new Color(.55f,.3f,.12f),1.2f,-.2f);
             var rng = new System.Random(world.Seed ^ 98231);
-            stories = new ColonyStorySystem(world.Seed);
+            social = new CatSocialSystem(world.Seed);
             for (int i=0; i<startingCats; i++)
             {
                 int px=x+(i%3)-1, py=y+(i/3)+1;
@@ -351,7 +365,7 @@ namespace Purrville.Colony
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,500,182),"Purrville — Life Simulation v0.6");
+            GUI.Box(new Rect(12,12,500,182),"Purrville — Living Society v0.7");
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
             GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
@@ -376,8 +390,8 @@ namespace Purrville.Colony
             GUI.Box(new Rect(12,top,500,193),"Cronica del pueblo (H para ocultar)");
             GUILayout.BeginArea(new Rect(22,top+28,480,155));
             historyScroll=GUILayout.BeginScrollView(historyScroll);
-            if (stories!=null)
-                for (int i=stories.History.Count-1;i>=0;i--) GUILayout.Label("- "+stories.History[i]);
+            if (social!=null)
+                for (int i=social.Chronicle.Count-1;i>=0;i--) GUILayout.Label("- "+social.Chronicle[i]);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
@@ -417,6 +431,16 @@ namespace Purrville.Colony
             GUILayout.Space(8);
             GUILayout.Label("ULTIMO RECUERDO");
             GUILayout.Label(p.LastMemory);
+            GUILayout.Space(8);
+            GUILayout.Label("RELACIONES");
+            if (social != null)
+            {
+                var relations = social.KnownRelations(p);
+                if (relations.Count == 0) GUILayout.Label("Sin relaciones registradas.");
+                foreach (var relation in relations)
+                    GUILayout.Label(relation.Key.Name + ": " + relation.Value +
+                        (relation.Value >= 30 ? " (Amistad)" : relation.Value <= -30 ? " (Rivalidad)" : ""));
+            }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
@@ -463,18 +487,18 @@ namespace Purrville.Colony
             var p = cat.profile;
             NeedAction action = NeedAction.None;
             Vector2Int destination = Cell(cat.obj.transform.position);
-            if (p.NeedsFood)
+            if (CatNeedsSystem.WantsFood(p))
             {
                 if (food <= 0) return false;
                 action = NeedAction.Eat;
                 destination = stockpile;
             }
-            else if (p.NeedsRest)
+            else if (CatNeedsSystem.WantsRest(p))
             {
                 action = NeedAction.Rest;
                 destination = cat.home != null ? cat.home.cell : stockpile;
             }
-            else if (p.NeedsSocial)
+            else if (CatNeedsSystem.WantsCompany(p))
             {
                 Cat other = null;
                 float nearest = float.MaxValue;
@@ -488,7 +512,7 @@ namespace Purrville.Colony
                 action = NeedAction.Socialize;
                 destination = Cell(other.obj.transform.position);
             }
-            else if (p.NeedsFun)
+            else if (CatNeedsSystem.WantsPlay(p))
             {
                 action = NeedAction.Play;
                 destination = cat.home != null ? cat.home.cell : stockpile;
@@ -507,20 +531,14 @@ namespace Purrville.Colony
                     if (food > 0)
                     {
                         food--;
-                        p.Hunger = Mathf.Min(100f, p.Hunger + 65f);
-                        p.Mood = Mathf.Min(100f, p.Mood + 4f);
-                        p.LastMemory = "Comio en el almacen.";
+                        CatNeedsSystem.Eat(p);
                     }
                     break;
                 case NeedAction.Rest:
-                    p.Energy = Mathf.Min(100f, p.Energy + Time.deltaTime * 9f);
-                    if (p.Energy < 85f) return;
-                    p.LastMemory = cat.home != null ? "Descanso en su casa." : "Descanso junto al almacen.";
+                    if (!CatNeedsSystem.Rest(p, Time.deltaTime, cat.home != null)) return;
                     break;
                 case NeedAction.Play:
-                    p.Fun = Mathf.Min(100f, p.Fun + Time.deltaTime * 12f);
-                    if (p.Fun < 85f) return;
-                    p.LastMemory = "Se tomo un rato para jugar.";
+                    if (!CatNeedsSystem.Play(p, Time.deltaTime)) return;
                     break;
                 case NeedAction.Socialize:
                     p.Social = Mathf.Min(100f, p.Social + Time.deltaTime * 14f);
