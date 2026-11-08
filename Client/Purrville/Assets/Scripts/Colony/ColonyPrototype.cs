@@ -30,6 +30,8 @@ namespace Purrville.Colony
         private string latestStory = "Los primeros gatitos llegaron al pueblo.";
         private Vector2Int stockpile;
         private Cat selectedCat;
+        private bool showCitizens = true, showHistory = true;
+        private Vector2 citizensScroll, historyScroll;
 
         private sealed class Cat
         {
@@ -77,6 +79,8 @@ namespace Purrville.Colony
             if (!initialized) Initialize();
             if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame) buildMode = !buildMode;
             if (Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame) automaticJobs = !automaticJobs;
+            if (Keyboard.current != null && Keyboard.current.tabKey.wasPressedThisFrame) showCitizens = !showCitizens;
+            if (Keyboard.current != null && Keyboard.current.hKey.wasPressedThisFrame) showHistory = !showHistory;
             HandleMouse();
             storyTimer -= Time.deltaTime;
             if (stories != null && storyTimer <= 0f)
@@ -344,7 +348,7 @@ namespace Purrville.Colony
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,500,182),"Purrville — First Colony v0.3");
+            GUI.Box(new Rect(12,12,500,182),"Purrville — Colony Management v0.5");
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
             GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
@@ -354,6 +358,67 @@ namespace Purrville.Colony
                 GUI.Label(new Rect(22,108,475,24),$"{p.Name} | {p.Temperament} | {p.Profession} | Energy {p.Energy:0} | Mood {p.Mood:0}");
             }
             GUI.Label(new Rect(22,135,470,40),"Historia: " + latestStory);
+            DrawManagementPanels();
+        }
+
+        private void DrawManagementPanels()
+        {
+            if (showCitizens)
+            {
+                float left = Mathf.Max(12, Screen.width - 335);
+                GUI.Box(new Rect(left, 12, 323, 340), "Habitantes (TAB para ocultar)");
+                GUILayout.BeginArea(new Rect(left + 10, 38, 303, 300));
+                citizensScroll = GUILayout.BeginScrollView(citizensScroll);
+                foreach (var cat in cats)
+                {
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label(cat.profile.Name + " | " + cat.profile.Temperament);
+                    GUILayout.Label("Energia " + cat.profile.Energy.ToString("0") +
+                        " | Animo " + cat.profile.Mood.ToString("0") +
+                        " | Tareas " + cat.profile.JobsCompleted);
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("Seleccionar", GUILayout.Width(92))) SelectCat(cat);
+                    var options = (CatProfession[])Enum.GetValues(typeof(CatProfession));
+                    if (GUILayout.Button("<", GUILayout.Width(30))) CycleProfession(cat.profile, options, -1);
+                    GUILayout.Label(cat.profile.Profession.ToString(), GUILayout.Width(95));
+                    if (GUILayout.Button(">", GUILayout.Width(30))) CycleProfession(cat.profile, options, 1);
+                    GUILayout.EndHorizontal();
+                    GUILayout.EndVertical();
+                }
+                GUILayout.EndScrollView();
+                GUILayout.EndArea();
+            }
+            if (showHistory)
+            {
+                float top = Mathf.Max(205, Screen.height - 205);
+                GUI.Box(new Rect(12, top, 500, 193), "Cronica del pueblo (H para ocultar)");
+                GUILayout.BeginArea(new Rect(22, top + 28, 480, 155));
+                historyScroll = GUILayout.BeginScrollView(historyScroll);
+                if (stories != null)
+                    for (int i = stories.History.Count - 1; i >= 0; i--)
+                        GUILayout.Label("- " + stories.History[i]);
+                GUILayout.EndScrollView();
+                GUILayout.EndArea();
+            }
+        }
+
+        private static void CycleProfession(CatProfile profile, CatProfession[] options, int direction)
+        {
+            int index = Array.IndexOf(options, profile.Profession);
+            profile.Profession = options[(index + direction + options.Length) % options.Length];
+        }
+
+        private void SelectCat(Cat chosen)
+        {
+            selectedCat = chosen;
+            foreach (var cat in cats)
+            {
+                cat.selected = cat == chosen;
+                cat.obj.GetComponent<SpriteRenderer>().color = cat.selected ? Color.yellow : cat.color;
+            }
+            if (cam != null)
+                cam.transform.position = new Vector3(chosen.obj.transform.position.x,
+                    chosen.obj.transform.position.y, cam.transform.position.z);
         }
 
         private void OnDestroy()
