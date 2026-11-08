@@ -33,6 +33,7 @@ namespace Purrville.Colony
         private bool showHistory = false;
         private Vector2 profileScroll, historyScroll;
 
+        private enum NeedAction { None, Eat, Rest, Play, Socialize }
         private sealed class Cat
         {
             public GameObject obj;
@@ -46,6 +47,8 @@ namespace Purrville.Colony
             public Kind carriedKind;
             public Building construction;
             public float workTimer;
+            public NeedAction needAction;
+            public Building home;
         }
 
         private enum Kind { Wood, Stone, Food }
@@ -65,6 +68,7 @@ namespace Purrville.Colony
             public bool completed;
             public float progress;
             public bool reserved;
+            public Cat occupant;
         }
 
         private void Start()
@@ -92,12 +96,15 @@ namespace Purrville.Colony
             if (automaticJobs && jobTimer <= 0)
             {
                 jobTimer = .7f;
-                foreach (var cat in cats) if (Idle(cat) && !cat.profile.NeedsRest) AssignJob(cat);
+                foreach (var cat in cats) if (Idle(cat) && cat.needAction == NeedAction.None)
+                {
+                    if (!AssignNeed(cat) && !cat.profile.NeedsRest && !cat.profile.NeedsFood) AssignJob(cat);
+                }
             }
             foreach (var cat in cats)
             {
-                bool working = cat.target != null || cat.carrying || cat.construction != null ||
-                    (cat.path != null && cat.pathIndex < cat.path.Count);
+                bool working = cat.needAction == NeedAction.None && (cat.target != null || cat.carrying || cat.construction != null ||
+                    (cat.path != null && cat.pathIndex < cat.path.Count));
                 cat.profile.Tick(Time.deltaTime, working);
                 UpdateCat(cat);
             }
@@ -224,11 +231,6 @@ namespace Purrville.Colony
 
         private void UpdateCat(Cat cat)
         {
-            if (cat.profile.NeedsRest && cat.target==null && !cat.carrying && cat.construction==null)
-            {
-                cat.path = null;
-                return;
-            }
             if (cat.path!=null && cat.pathIndex<cat.path.Count)
             {
                 Vector2Int next=cat.path[cat.pathIndex];
@@ -238,6 +240,7 @@ namespace Purrville.Colony
                 if (Vector2.Distance(cat.obj.transform.position,destination)<.05f) cat.pathIndex++;
                 return;
             }
+            if (cat.needAction != NeedAction.None) { UpdateNeed(cat); return; }
             if (cat.target!=null)
             {
                 cat.workTimer+=Time.deltaTime;
@@ -280,6 +283,7 @@ namespace Purrville.Colony
                         cat.profile.JobsCompleted++;
                         b.obj.GetComponent<SpriteRenderer>().color=new Color(.75f,.45f,.28f);
                         b.obj.name="House";
+                        AssignHome(b);
                         Debug.Log("Purrville: house completed!");
                     }
                 }
@@ -329,6 +333,7 @@ namespace Purrville.Colony
             foreach (var cat in cats)
             {
                 if (!cat.selected) continue;
+                cat.needAction = NeedAction.None;
                 if (cat.target!=null) cat.target.reserved=false;
                 cat.target=null;
                 if (cat.construction!=null) cat.construction.reserved=false;
@@ -394,9 +399,13 @@ namespace Purrville.Colony
             GUILayout.HorizontalSlider(p.Energy,0,100);
             GUILayout.Label("Animo: "+p.Mood.ToString("0")+" / 100");
             GUILayout.HorizontalSlider(p.Mood,0,100);
+            GUILayout.Label("Saciedad: "+p.Hunger.ToString("0")+" / 100");
+            GUILayout.Label("Diversion: "+p.Fun.ToString("0")+" / 100");
+            GUILayout.Label("Social: "+p.Social.ToString("0")+" / 100");
+            GUILayout.Label("Hogar: "+p.HomeName);
             GUILayout.Label("Tareas completadas: "+p.JobsCompleted);
             GUILayout.Label("Amistades: "+p.Friendships);
-            GUILayout.Label("Actividad: "+(cat.construction!=null?"Construyendo":cat.carrying?"Transportando":cat.target!=null?"Recolectando":p.NeedsRest?"Descansando":"Libre"));
+            GUILayout.Label("Actividad: "+(cat.construction!=null?"Construyendo":cat.carrying?"Transportando":cat.target!=null?"Recolectando":cat.needAction!=NeedAction.None?cat.needAction.ToString():p.NeedsRest?"Descansando":"Libre"));
             GUILayout.Space(8);
             GUILayout.Label("PRIORIDADES DE TRABAJO");
             GUILayout.Label("1 = maxima | 4 = minima | 0 = desactivado");
