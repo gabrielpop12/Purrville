@@ -17,6 +17,31 @@ namespace Purrville.Colony
         public int Friendships;
         public string LastMemory = "Llego a Purrville";
         private bool resting;
+        // 0 disables a job; 1 is highest priority; 4 is lowest.
+        public int WoodPriority = 2, StonePriority = 2, FoodPriority = 2, BuildPriority = 2;
+        public int GetPriority(CatProfession job)
+        {
+            switch (job)
+            {
+                case CatProfession.Lumberjack: return WoodPriority;
+                case CatProfession.Miner: return StonePriority;
+                case CatProfession.Forager: return FoodPriority;
+                case CatProfession.Builder: return BuildPriority;
+                default: return 0;
+            }
+        }
+        public void SetPriority(CatProfession job, int priority)
+        {
+            priority = Math.Max(0, Math.Min(4, priority));
+            switch (job)
+            {
+                case CatProfession.Lumberjack: WoodPriority = priority; break;
+                case CatProfession.Miner: StonePriority = priority; break;
+                case CatProfession.Forager: FoodPriority = priority; break;
+                case CatProfession.Builder: BuildPriority = priority; break;
+            }
+        }
+
 
         private static readonly string[] Names = {
             "Mochi", "Miso", "Nube", "Chispa", "Menta", "Pompom", "Luna",
