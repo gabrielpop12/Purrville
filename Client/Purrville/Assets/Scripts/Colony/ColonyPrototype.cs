@@ -98,7 +98,7 @@ namespace Purrville.Colony
                 jobTimer = .7f;
                 foreach (var cat in cats) if (Idle(cat) && cat.needAction == NeedAction.None)
                 {
-                    if (!AssignNeed(cat) && !cat.profile.NeedsRest && !cat.profile.NeedsFood) AssignJob(cat);
+                    if (!AssignNeed(cat) && !cat.profile.NeedsRest) AssignJob(cat);
                 }
             }
             foreach (var cat in cats)
@@ -159,7 +159,7 @@ namespace Purrville.Colony
                 obj.GetComponent<SpriteRenderer>().enabled=false;
                 resources.Add(new Resource {obj=obj,kind=kind,cell=cell});
             }
-            Debug.Log("Purrville v0.3: colony initialized. B = house blueprint; J = auto jobs.");
+            Debug.Log("Purrville v0.6: life simulation initialized. B = house blueprint; J = auto jobs.");
         }
 
         private bool Land(int x,int y) =>
@@ -220,6 +220,7 @@ namespace Purrville.Colony
                 if (r.reserved || r.obj==null || !world.IsDiscovered(r.cell.x,r.cell.y)) continue;
                 int priority=cat.profile.GetPriority(r.kind==Kind.Wood?CatProfession.Lumberjack:r.kind==Kind.Stone?CatProfession.Miner:CatProfession.Forager);
                 if (priority==0) continue;
+                if (cat.profile.NeedsFood && food == 0 && r.kind == Kind.Food) priority = 1;
                 int d=Mathf.Abs(current.x-r.cell.x)+Mathf.Abs(current.y-r.cell.y)+priority*18;
                 if (cat.profile.Profession == CatProfession.Lumberjack && r.kind == Kind.Wood) d -= 12;
                 if (cat.profile.Profession == CatProfession.Miner && r.kind == Kind.Stone) d -= 12;
@@ -350,7 +351,7 @@ namespace Purrville.Colony
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,500,182),"Purrville — Colony Management v0.5");
+            GUI.Box(new Rect(12,12,500,182),"Purrville — Life Simulation v0.6");
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
             GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
