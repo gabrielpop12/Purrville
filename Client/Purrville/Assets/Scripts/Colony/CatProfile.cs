@@ -14,6 +14,9 @@ namespace Purrville.Colony
         public float Energy = 100f;
         public float Mood = 75f;
         public int JobsCompleted;
+        public int Friendships;
+        public string LastMemory = "Llego a Purrville";
+        private bool resting;
 
         private static readonly string[] Names = {
             "Mochi", "Miso", "Nube", "Chispa", "Menta", "Pompom", "Luna",
@@ -34,10 +37,12 @@ namespace Purrville.Colony
         public void Tick(float deltaTime, bool working)
         {
             Energy = Math.Clamp(Energy + (working ? -2.2f : 3.8f) * deltaTime, 0f, 100f);
+            if (Energy < 18f) resting = true;
+            if (Energy > 80f) resting = false;
             Mood = Math.Clamp(Mood + (Energy < 20f ? -1.1f : .15f) * deltaTime, 0f, 100f);
         }
 
-        public bool NeedsRest => Energy < 18f;
+        public bool NeedsRest => resting;
         public string Status => NeedsRest ? "Descansando" : Mood < 35f ? "Malhumorado" : "Bien";
     }
 }
