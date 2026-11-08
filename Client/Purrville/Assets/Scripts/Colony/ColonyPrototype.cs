@@ -442,6 +442,95 @@ namespace Purrville.Colony
             }
         }
 
+
+        private void AssignHome(Building building)
+        {
+            if (building.occupant != null) return;
+            foreach (var cat in cats)
+            {
+                if (cat.home != null) continue;
+                building.occupant = cat;
+                cat.home = building;
+                cat.profile.HomeName = "Casa (" + building.cell.x + ", " + building.cell.y + ")";
+                Debug.Log("[Purrville] " + cat.profile.Name + " tiene un hogar.");
+                break;
+            }
+        }
+
+        private bool AssignNeed(Cat cat)
+        {
+            var p = cat.profile;
+            NeedAction action = NeedAction.None;
+            Vector2Int destination = Cell(cat.obj.transform.position);
+            if (p.NeedsFood)
+            {
+                if (food <= 0) return false;
+                action = NeedAction.Eat;
+                destination = stockpile;
+            }
+            else if (p.NeedsRest)
+            {
+                action = NeedAction.Rest;
+                destination = cat.home != null ? cat.home.cell : stockpile;
+            }
+            else if (p.NeedsSocial)
+            {
+                Cat other = null;
+                float nearest = float.MaxValue;
+                foreach (var candidate in cats)
+                {
+                    if (candidate == cat || candidate.needAction != NeedAction.None) continue;
+                    float distance = Vector2.Distance(cat.obj.transform.position, candidate.obj.transform.position);
+                    if (distance < nearest) { nearest = distance; other = candidate; }
+                }
+                if (other == null) return false;
+                action = NeedAction.Socialize;
+                destination = Cell(other.obj.transform.position);
+            }
+            else if (p.NeedsFun)
+            {
+                action = NeedAction.Play;
+                destination = cat.home != null ? cat.home.cell : stockpile;
+            }
+            if (action == NeedAction.None || !Move(cat, destination)) return false;
+            cat.needAction = action;
+            return true;
+        }
+
+        private void UpdateNeed(Cat cat)
+        {
+            var p = cat.profile;
+            switch (cat.needAction)
+            {
+                case NeedAction.Eat:
+                    if (food > 0)
+                    {
+                        food--;
+                        p.Hunger = Mathf.Min(100f, p.Hunger + 65f);
+                        p.Mood = Mathf.Min(100f, p.Mood + 4f);
+                        p.LastMemory = "Comio en el almacen.";
+                    }
+                    break;
+                case NeedAction.Rest:
+                    p.Energy = Mathf.Min(100f, p.Energy + Time.deltaTime * 9f);
+                    if (p.Energy < 85f) return;
+                    p.LastMemory = cat.home != null ? "Descanso en su casa." : "Descanso junto al almacen.";
+                    break;
+                case NeedAction.Play:
+                    p.Fun = Mathf.Min(100f, p.Fun + Time.deltaTime * 12f);
+                    if (p.Fun < 85f) return;
+                    p.LastMemory = "Se tomo un rato para jugar.";
+                    break;
+                case NeedAction.Socialize:
+                    p.Social = Mathf.Min(100f, p.Social + Time.deltaTime * 14f);
+                    p.Mood = Mathf.Min(100f, p.Mood + Time.deltaTime);
+                    if (p.Social < 85f) return;
+                    p.LastMemory = "Paso un rato conversando.";
+                    break;
+            }
+            cat.needAction = NeedAction.None;
+        }
+
         private void OnDestroy()
         {
             if (sprite!=null) Destroy(sprite);
