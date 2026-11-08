@@ -57,6 +57,7 @@ namespace Purrville.Colony
             public Vector2Int cell;
             public bool completed;
             public float progress;
+            public bool reserved;
         }
 
         private void Start()
@@ -175,9 +176,9 @@ namespace Purrville.Colony
         private void AssignJob(Cat cat)
         {
             foreach (var b in buildings)
-                if (!b.completed && wood>=12 && stone>=6)
+                if (!b.completed && !b.reserved && wood>=12 && stone>=6)
                 {
-                    if (Move(cat,b.cell)) {cat.construction=b;return;}
+                    if (Move(cat,b.cell)) {cat.construction=b;b.reserved=true;return;}
                 }
             Resource best=null;
             int distance=int.MaxValue;
@@ -245,7 +246,11 @@ namespace Purrville.Colony
                         Debug.Log("Purrville: house completed!");
                     }
                 }
-                cat.construction=null;
+                if (b.completed || wood<12 || stone<6)
+                {
+                    b.reserved=false;
+                    cat.construction=null;
+                }
             }
         }
 
@@ -291,7 +296,9 @@ namespace Purrville.Colony
             {
                 if (!cat.selected) continue;
                 if (cat.target!=null) cat.target.reserved=false;
-                cat.target=null;cat.construction=null;
+                cat.target=null;
+                if (cat.construction!=null) cat.construction.reserved=false;
+                cat.construction=null;
                 if (cat.carrying) continue;
                 if (resource!=null && !resource.reserved && Move(cat,resource.cell))
                 {
