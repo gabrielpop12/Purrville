@@ -30,8 +30,8 @@ namespace Purrville.Colony
         private string latestStory = "Los primeros gatitos llegaron al pueblo.";
         private Vector2Int stockpile;
         private Cat selectedCat;
-        private bool showCitizens = true, showHistory = true;
-        private Vector2 citizensScroll, historyScroll;
+        private bool showHistory = false;
+        private Vector2 profileScroll, historyScroll;
 
         private sealed class Cat
         {
@@ -79,7 +79,6 @@ namespace Purrville.Colony
             if (!initialized) Initialize();
             if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame) buildMode = !buildMode;
             if (Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame) automaticJobs = !automaticJobs;
-            if (Keyboard.current != null && Keyboard.current.tabKey.wasPressedThisFrame) showCitizens = !showCitizens;
             if (Keyboard.current != null && Keyboard.current.hKey.wasPressedThisFrame) showHistory = !showHistory;
             HandleMouse();
             storyTimer -= Time.deltaTime;
@@ -202,7 +201,7 @@ namespace Purrville.Colony
         private void AssignJob(Cat cat)
         {
             foreach (var b in buildings)
-                if (!b.completed && !b.reserved && wood>=12 && stone>=6)
+                if (!b.completed && !b.reserved && wood>=12 && stone>=6 && cat.profile.BuildPriority>0)
                 {
                     if (Move(cat,b.cell)) {cat.construction=b;b.reserved=true;return;}
                 }
@@ -212,7 +211,9 @@ namespace Purrville.Colony
             foreach (var r in resources)
             {
                 if (r.reserved || r.obj==null || !world.IsDiscovered(r.cell.x,r.cell.y)) continue;
-                int d=Mathf.Abs(current.x-r.cell.x)+Mathf.Abs(current.y-r.cell.y);
+                int priority=cat.profile.GetPriority(r.kind==Kind.Wood?CatProfession.Lumberjack:r.kind==Kind.Stone?CatProfession.Miner:CatProfession.Forager);
+                if (priority==0) continue;
+                int d=Mathf.Abs(current.x-r.cell.x)+Mathf.Abs(current.y-r.cell.y)+priority*18;
                 if (cat.profile.Profession == CatProfession.Lumberjack && r.kind == Kind.Wood) d -= 12;
                 if (cat.profile.Profession == CatProfession.Miner && r.kind == Kind.Stone) d -= 12;
                 if (cat.profile.Profession == CatProfession.Forager && r.kind == Kind.Food) d -= 12;
@@ -307,6 +308,7 @@ namespace Purrville.Colony
             var cell=Cell(point);
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
+                if (IsPointerOverPanel(p)) return;
                 if (buildMode) {PlaceHouse(cell);return;}
                 Cat nearest=null;float best=.8f;
                 foreach (var cat in cats)
@@ -314,14 +316,9 @@ namespace Purrville.Colony
                     float d=Vector2.Distance(point,cat.obj.transform.position);
                     if (d<best) {best=d;nearest=cat;}
                 }
-                selectedCat = nearest;
-                foreach (var cat in cats)
-                {
-                    cat.selected=cat==nearest;
-                    cat.obj.GetComponent<SpriteRenderer>().color=cat.selected?Color.yellow:cat.color;
-                }
+                SelectCat(nearest);
             }
-            if (!Mouse.current.rightButton.wasPressedThisFrame) return;
+            if (!Mouse.current.rightButton.wasPressedThisFrame || IsPointerOverPanel(p)) return;
             Resource resource=null;float min=.85f;
             foreach (var r in resources)
             {
@@ -352,73 +349,88 @@ namespace Purrville.Colony
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
             GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
-            if (selectedCat != null)
-            {
-                var p = selectedCat.profile;
-                GUI.Label(new Rect(22,108,475,24),$"{p.Name} | {p.Temperament} | {p.Profession} | Energy {p.Energy:0} | Mood {p.Mood:0}");
-            }
+            GUI.Label(new Rect(22,108,475,24),"Click en un gatito para abrir su ficha individual.");
             GUI.Label(new Rect(22,135,470,40),"Historia: " + latestStory);
             DrawManagementPanels();
         }
 
-        private void DrawManagementPanels()
+        private bool IsPointerOverPanel(Vector2 pointer)
         {
-            if (showCitizens)
-            {
-                float left = Mathf.Max(12, Screen.width - 335);
-                GUI.Box(new Rect(left, 12, 323, 340), "Habitantes (TAB para ocultar)");
-                GUILayout.BeginArea(new Rect(left + 10, 38, 303, 300));
-                citizensScroll = GUILayout.BeginScrollView(citizensScroll);
-                foreach (var cat in cats)
-                {
-                    GUILayout.BeginVertical(GUI.skin.box);
-                    GUILayout.Label(cat.profile.Name + " | " + cat.profile.Temperament);
-                    GUILayout.Label("Energia " + cat.profile.Energy.ToString("0") +
-                        " | Animo " + cat.profile.Mood.ToString("0") +
-                        " | Tareas " + cat.profile.JobsCompleted);
-                    GUILayout.BeginHorizontal();
-                    if (GUILayout.Button("Seleccionar", GUILayout.Width(92))) SelectCat(cat);
-                    var options = (CatProfession[])Enum.GetValues(typeof(CatProfession));
-                    if (GUILayout.Button("<", GUILayout.Width(30))) CycleProfession(cat.profile, options, -1);
-                    GUILayout.Label(cat.profile.Profession.ToString(), GUILayout.Width(95));
-                    if (GUILayout.Button(">", GUILayout.Width(30))) CycleProfession(cat.profile, options, 1);
-                    GUILayout.EndHorizontal();
-                    GUILayout.EndVertical();
-                }
-                GUILayout.EndScrollView();
-                GUILayout.EndArea();
-            }
-            if (showHistory)
-            {
-                float top = Mathf.Max(205, Screen.height - 205);
-                GUI.Box(new Rect(12, top, 500, 193), "Cronica del pueblo (H para ocultar)");
-                GUILayout.BeginArea(new Rect(22, top + 28, 480, 155));
-                historyScroll = GUILayout.BeginScrollView(historyScroll);
-                if (stories != null)
-                    for (int i = stories.History.Count - 1; i >= 0; i--)
-                        GUILayout.Label("- " + stories.History[i]);
-                GUILayout.EndScrollView();
-                GUILayout.EndArea();
-            }
+            float y = Screen.height - pointer.y;
+            if (selectedCat != null && new Rect(Screen.width-375,12,363,490).Contains(new Vector2(pointer.x,y))) return true;
+            if (showHistory && new Rect(12,Mathf.Max(205,Screen.height-205),500,193).Contains(new Vector2(pointer.x,y))) return true;
+            return new Rect(12,12,500,182).Contains(new Vector2(pointer.x,y));
         }
 
-        private static void CycleProfession(CatProfile profile, CatProfession[] options, int direction)
+        private void DrawManagementPanels()
         {
-            int index = Array.IndexOf(options, profile.Profession);
-            profile.Profession = options[(index + direction + options.Length) % options.Length];
+            if (selectedCat != null) DrawCatProfile();
+            if (!showHistory) return;
+            float top = Mathf.Max(205, Screen.height - 205);
+            GUI.Box(new Rect(12,top,500,193),"Cronica del pueblo (H para ocultar)");
+            GUILayout.BeginArea(new Rect(22,top+28,480,155));
+            historyScroll=GUILayout.BeginScrollView(historyScroll);
+            if (stories!=null)
+                for (int i=stories.History.Count-1;i>=0;i--) GUILayout.Label("- "+stories.History[i]);
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private void DrawCatProfile()
+        {
+            var cat=selectedCat;
+            var p=cat.profile;
+            float left=Mathf.Max(12,Screen.width-375);
+            GUI.Box(new Rect(left,12,363,490),"Ficha de "+p.Name);
+            if (GUI.Button(new Rect(left+326,18,26,24),"X")) { SelectCat(null); return; }
+            GUILayout.BeginArea(new Rect(left+12,43,339,446));
+            profileScroll=GUILayout.BeginScrollView(profileScroll);
+            GUILayout.Label("Nombre: "+p.Name);
+            GUILayout.Label("Personalidad: "+p.Temperament);
+            GUILayout.Label("Profesion: "+p.Profession);
+            GUILayout.Label("Estado: "+p.Status);
+            GUILayout.Space(6);
+            GUILayout.Label("Energia: "+p.Energy.ToString("0")+" / 100");
+            GUILayout.HorizontalSlider(p.Energy,0,100);
+            GUILayout.Label("Animo: "+p.Mood.ToString("0")+" / 100");
+            GUILayout.HorizontalSlider(p.Mood,0,100);
+            GUILayout.Label("Tareas completadas: "+p.JobsCompleted);
+            GUILayout.Label("Amistades: "+p.Friendships);
+            GUILayout.Label("Actividad: "+(cat.construction!=null?"Construyendo":cat.carrying?"Transportando":cat.target!=null?"Recolectando":p.NeedsRest?"Descansando":"Libre"));
+            GUILayout.Space(8);
+            GUILayout.Label("PRIORIDADES DE TRABAJO");
+            GUILayout.Label("1 = maxima | 4 = minima | 0 = desactivado");
+            PriorityRow(p,CatProfession.Lumberjack,"Madera");
+            PriorityRow(p,CatProfession.Miner,"Piedra");
+            PriorityRow(p,CatProfession.Forager,"Comida");
+            PriorityRow(p,CatProfession.Builder,"Construccion");
+            GUILayout.Space(8);
+            GUILayout.Label("ULTIMO RECUERDO");
+            GUILayout.Label(p.LastMemory);
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private static void PriorityRow(CatProfile profile,CatProfession job,string label)
+        {
+            int priority=profile.GetPriority(job);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label,GUILayout.Width(115));
+            if (GUILayout.Button("-",GUILayout.Width(32))) profile.SetPriority(job,priority-1);
+            GUILayout.Label(priority==0?"OFF":priority.ToString(),GUILayout.Width(35));
+            if (GUILayout.Button("+",GUILayout.Width(32))) profile.SetPriority(job,priority+1);
+            GUILayout.EndHorizontal();
         }
 
         private void SelectCat(Cat chosen)
         {
-            selectedCat = chosen;
+            selectedCat=chosen;
+            profileScroll=Vector2.zero;
             foreach (var cat in cats)
             {
-                cat.selected = cat == chosen;
-                cat.obj.GetComponent<SpriteRenderer>().color = cat.selected ? Color.yellow : cat.color;
+                cat.selected=cat==chosen;
+                cat.obj.GetComponent<SpriteRenderer>().color=cat.selected?Color.yellow:cat.color;
             }
-            if (cam != null)
-                cam.transform.position = new Vector3(chosen.obj.transform.position.x,
-                    chosen.obj.transform.position.y, cam.transform.position.z);
         }
 
         private void OnDestroy()
