@@ -26,10 +26,12 @@ namespace Purrville.Colony
         private int wood, stone, food;
         private float visionTimer, jobTimer;
         private Vector2Int stockpile;
+        private Cat selectedCat;
 
         private sealed class Cat
         {
             public GameObject obj;
+            public CatProfile profile;
             public Color color;
             public bool selected;
             public List<Vector2Int> path;
@@ -77,9 +79,15 @@ namespace Purrville.Colony
             if (automaticJobs && jobTimer <= 0)
             {
                 jobTimer = .7f;
-                foreach (var cat in cats) if (Idle(cat)) AssignJob(cat);
+                foreach (var cat in cats) if (Idle(cat) && !cat.profile.NeedsRest) AssignJob(cat);
             }
-            foreach (var cat in cats) UpdateCat(cat);
+            foreach (var cat in cats)
+            {
+                bool working = cat.target != null || cat.carrying || cat.construction != null ||
+                    (cat.path != null && cat.pathIndex < cat.path.Count);
+                cat.profile.Tick(Time.deltaTime, working);
+                UpdateCat(cat);
+            }
             visionTimer -= Time.deltaTime;
             if (visionTimer <= 0)
             {
@@ -113,7 +121,9 @@ namespace Purrville.Colony
                 if (!Land(px,py)) {px=x;py=y;}
                 var color = Color.HSVToRGB((i*.173f+.06f)%1f,.4f,.95f);
                 var obj=MakeSprite("Cat_"+(i+1),new Vector2Int(px,py),color,.72f,-1f);
-                cats.Add(new Cat {obj=obj,color=color});
+                var profile = CatProfile.Create(rng, i);
+                obj.name = profile.Name;
+                cats.Add(new Cat {obj=obj,color=color,profile=profile});
             }
             for (int i=0; i<resourceCount; i++)
             {
@@ -194,6 +204,11 @@ namespace Purrville.Colony
 
         private void UpdateCat(Cat cat)
         {
+            if (cat.profile.NeedsRest && cat.target==null && !cat.carrying && cat.construction==null)
+            {
+                cat.path = null;
+                return;
+            }
             if (cat.path!=null && cat.pathIndex<cat.path.Count)
             {
                 Vector2Int next=cat.path[cat.pathIndex];
@@ -278,6 +293,7 @@ namespace Purrville.Colony
                     float d=Vector2.Distance(point,cat.obj.transform.position);
                     if (d<best) {best=d;nearest=cat;}
                 }
+                selectedCat = nearest;
                 foreach (var cat in cats)
                 {
                     cat.selected=cat==nearest;
@@ -311,10 +327,15 @@ namespace Purrville.Colony
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,380,115),"Purrville — First Colony v0.3");
+            GUI.Box(new Rect(12,12,420,150),"Purrville — First Colony v0.3");
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
-            GUI.Label(new Rect(22,85,360,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
+            GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
+            if (selectedCat != null)
+            {
+                var p = selectedCat.profile;
+                GUI.Label(new Rect(22,108,395,24),$"{p.Name} | {p.Temperament} | {p.Profession} | Energy {p.Energy:0} | Mood {p.Mood:0}");
+            }
         }
 
         private void OnDestroy()
