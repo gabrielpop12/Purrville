@@ -24,7 +24,10 @@ namespace Purrville.Colony
         private Camera cam;
         private bool initialized, buildMode;
         private int wood, stone, food;
-        private float visionTimer, jobTimer;
+        private float visionTimer, jobTimer, storyTimer = 20f;
+        private ColonyStorySystem stories;
+        private readonly List<CatProfile> profiles = new List<CatProfile>();
+        private string latestStory = "Los primeros gatitos llegaron al pueblo.";
         private Vector2Int stockpile;
         private Cat selectedCat;
 
@@ -75,6 +78,13 @@ namespace Purrville.Colony
             if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame) buildMode = !buildMode;
             if (Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame) automaticJobs = !automaticJobs;
             HandleMouse();
+            storyTimer -= Time.deltaTime;
+            if (stories != null && storyTimer <= 0f)
+            {
+                storyTimer = 25f;
+                var story = stories.TryGenerate(profiles);
+                if (story != null) { latestStory = story; Debug.Log("[Purrville Stories] " + story); }
+            }
             jobTimer -= Time.deltaTime;
             if (automaticJobs && jobTimer <= 0)
             {
@@ -98,7 +108,7 @@ namespace Purrville.Colony
                 foreach (var resource in resources)
                     if (resource.obj != null)
                         resource.obj.GetComponent<SpriteRenderer>().enabled =
-                            world.GetDiscoveryState(resource.cell.x, resource.cell.y) == DiscoveryState.Visible;
+                            world.IsDiscovered(resource.cell.x, resource.cell.y);
             }
         }
 
@@ -115,6 +125,7 @@ namespace Purrville.Colony
             if (cam != null) cam.transform.position = new Vector3(x,y,cam.transform.position.z);
             MakeSprite("Stockpile",stockpile,new Color(.55f,.3f,.12f),1.2f,-.2f);
             var rng = new System.Random(world.Seed ^ 98231);
+            stories = new ColonyStorySystem(world.Seed);
             for (int i=0; i<startingCats; i++)
             {
                 int px=x+(i%3)-1, py=y+(i/3)+1;
@@ -124,6 +135,7 @@ namespace Purrville.Colony
                 var profile = CatProfile.Create(rng, i);
                 obj.name = profile.Name;
                 cats.Add(new Cat {obj=obj,color=color,profile=profile});
+                profiles.Add(profile);
             }
             for (int i=0; i<resourceCount; i++)
             {
@@ -195,8 +207,11 @@ namespace Purrville.Colony
             var current=Cell(cat.obj.transform.position);
             foreach (var r in resources)
             {
-                if (r.reserved || r.obj==null || world.GetDiscoveryState(r.cell.x,r.cell.y)!=DiscoveryState.Visible) continue;
+                if (r.reserved || r.obj==null || !world.IsDiscovered(r.cell.x,r.cell.y)) continue;
                 int d=Mathf.Abs(current.x-r.cell.x)+Mathf.Abs(current.y-r.cell.y);
+                if (cat.profile.Profession == CatProfession.Lumberjack && r.kind == Kind.Wood) d -= 12;
+                if (cat.profile.Profession == CatProfession.Miner && r.kind == Kind.Stone) d -= 12;
+                if (cat.profile.Profession == CatProfession.Forager && r.kind == Kind.Food) d -= 12;
                 if (d<distance) {distance=d;best=r;}
             }
             if (best!=null && Move(cat,best.cell)) {cat.target=best;best.reserved=true;}
@@ -224,6 +239,7 @@ namespace Purrville.Colony
                 if (cat.workTimer<.8f) return;
                 cat.workTimer=0;
                 cat.carriedKind=cat.target.kind;
+                cat.profile.JobsCompleted++;
                 cat.carrying=true;
                 cat.target.remaining--;
                 cat.target.reserved=false;
@@ -256,6 +272,7 @@ namespace Purrville.Colony
                     {
                         wood-=12;stone-=6;
                         b.completed=true;
+                        cat.profile.JobsCompleted++;
                         b.obj.GetComponent<SpriteRenderer>().color=new Color(.75f,.45f,.28f);
                         b.obj.name="House";
                         Debug.Log("Purrville: house completed!");
@@ -271,7 +288,7 @@ namespace Purrville.Colony
 
         private void PlaceHouse(Vector2Int cell)
         {
-            if (!Land(cell.x,cell.y) || world.GetDiscoveryState(cell.x,cell.y)!=DiscoveryState.Visible) return;
+            if (!Land(cell.x,cell.y) || !world.IsDiscovered(cell.x,cell.y)) return;
             foreach (var b in buildings) if (b.cell==cell) return;
             var obj=MakeSprite("HouseBlueprint",cell,new Color(.3f,.75f,1f,.7f),1.3f,-.3f);
             buildings.Add(new Building {obj=obj,cell=cell});
@@ -304,7 +321,7 @@ namespace Purrville.Colony
             Resource resource=null;float min=.85f;
             foreach (var r in resources)
             {
-                if (r.obj==null || world.GetDiscoveryState(r.cell.x,r.cell.y)!=DiscoveryState.Visible) continue;
+                if (r.obj==null || !world.IsDiscovered(r.cell.x,r.cell.y)) continue;
                 float d=Vector2.Distance(point,r.obj.transform.position);
                 if (d<min) {min=d;resource=r;}
             }
@@ -327,15 +344,16 @@ namespace Purrville.Colony
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,420,150),"Purrville — First Colony v0.3");
+            GUI.Box(new Rect(12,12,500,182),"Purrville — First Colony v0.3");
             GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
             GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
             GUI.Label(new Rect(22,85,390,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
             if (selectedCat != null)
             {
                 var p = selectedCat.profile;
-                GUI.Label(new Rect(22,108,395,24),$"{p.Name} | {p.Temperament} | {p.Profession} | Energy {p.Energy:0} | Mood {p.Mood:0}");
+                GUI.Label(new Rect(22,108,475,24),$"{p.Name} | {p.Temperament} | {p.Profession} | Energy {p.Energy:0} | Mood {p.Mood:0}");
             }
+            GUI.Label(new Rect(22,135,470,40),"Historia: " + latestStory);
         }
 
         private void OnDestroy()
