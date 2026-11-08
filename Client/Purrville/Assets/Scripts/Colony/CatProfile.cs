@@ -13,6 +13,10 @@ namespace Purrville.Colony
         public CatProfession Profession;
         public float Energy = 100f;
         public float Mood = 75f;
+        public float Hunger = 85f;
+        public float Fun = 80f;
+        public float Social = 80f;
+        public string HomeName = "Sin hogar";
         public int JobsCompleted;
         public int Friendships;
         public string LastMemory = "Llego a Purrville";
@@ -64,10 +68,16 @@ namespace Purrville.Colony
             Energy = Math.Clamp(Energy + (working ? -2.2f : 3.8f) * deltaTime, 0f, 100f);
             if (Energy < 18f) resting = true;
             if (Energy > 80f) resting = false;
-            Mood = Math.Clamp(Mood + (Energy < 20f ? -1.1f : .15f) * deltaTime, 0f, 100f);
+            Hunger = Math.Clamp(Hunger - 0.42f * deltaTime, 0f, 100f);
+            Fun = Math.Clamp(Fun - (working ? .18f : .04f) * deltaTime, 0f, 100f);
+            Social = Math.Clamp(Social - .09f * deltaTime, 0f, 100f);
+            Mood = Math.Clamp(Mood + (Energy < 20f || Hunger < 20f ? -1.1f : .15f) * deltaTime, 0f, 100f);
         }
 
         public bool NeedsRest => resting;
-        public string Status => NeedsRest ? "Descansando" : Mood < 35f ? "Malhumorado" : "Bien";
+        public bool NeedsFood => Hunger < 35f;
+        public bool NeedsFun => Fun < 30f;
+        public bool NeedsSocial => Social < 30f;
+        public string Status => NeedsFood ? "Hambriento" : NeedsRest ? "Cansado" : NeedsSocial ? "Solitario" : Mood < 35f ? "Malhumorado" : "Bien";
     }
 }
