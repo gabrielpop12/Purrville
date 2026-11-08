@@ -6,30 +6,39 @@ using Purrville.World;
 
 namespace Purrville.Colony
 {
-    /// <summary>Playable prototype: cats, selection, right-click orders, resource harvesting and fog reveal.</summary>
+    /// <summary>v0.3 colony loop: pathfinding, auto-harvest, stockpile, and house construction.</summary>
     public sealed class ColonyPrototype : MonoBehaviour
     {
         [SerializeField] private ProceduralWorld world;
-        [SerializeField] private int startingCats = 5;
-        [SerializeField] private int resourceCount = 120;
+        [SerializeField, Range(1, 20)] private int startingCats = 5;
+        [SerializeField, Range(20, 500)] private int resourceCount = 180;
         [SerializeField] private float movementSpeed = 4f;
         [SerializeField] private int visionRadius = 7;
+        [SerializeField] private bool automaticJobs = true;
         private readonly List<Cat> cats = new List<Cat>();
         private readonly List<Resource> resources = new List<Resource>();
-        private readonly List<Vector2Int> positions = new List<Vector2Int>();
+        private readonly List<Vector2Int> vision = new List<Vector2Int>();
+        private readonly List<Building> buildings = new List<Building>();
         private Sprite sprite;
-        private int wood, stone, food;
-        private float visionTimer;
-        private float resourceVisibilityTimer;
-        private bool initialized;
+        private Texture2D texture;
         private Camera cam;
+        private bool initialized, buildMode;
+        private int wood, stone, food;
+        private float visionTimer, jobTimer;
+        private Vector2Int stockpile;
 
         private sealed class Cat
         {
             public GameObject obj;
-            public Vector3 destination;
-            public Resource target;
+            public Color color;
             public bool selected;
+            public List<Vector2Int> path;
+            public int pathIndex;
+            public Resource target;
+            public bool carrying;
+            public Kind carriedKind;
+            public Building construction;
+            public float workTimer;
         }
 
         private enum Kind { Wood, Stone, Food }
@@ -37,7 +46,17 @@ namespace Purrville.Colony
         {
             public GameObject obj;
             public Kind kind;
-            public int remaining = 5;
+            public int remaining = 6;
+            public bool reserved;
+            public Vector2Int cell;
+        }
+
+        private sealed class Building
+        {
+            public GameObject obj;
+            public Vector2Int cell;
+            public bool completed;
+            public float progress;
         }
 
         private void Start()
@@ -50,110 +69,83 @@ namespace Purrville.Colony
         {
             if (world == null || !world.IsGenerated) return;
             if (!initialized) Initialize();
+            if (Keyboard.current != null && Keyboard.current.bKey.wasPressedThisFrame) buildMode = !buildMode;
+            if (Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame) automaticJobs = !automaticJobs;
             HandleMouse();
-            foreach (var cat in cats)
+            jobTimer -= Time.deltaTime;
+            if (automaticJobs && jobTimer <= 0)
             {
-                if (cat.target != null && cat.target.obj == null) cat.target = null;
-                Vector3 destination = cat.target != null ? cat.target.obj.transform.position : cat.destination;
-                if (Vector3.Distance(cat.obj.transform.position, destination) > .8f)
-                    cat.obj.transform.position = Vector3.MoveTowards(cat.obj.transform.position, destination, movementSpeed * Time.deltaTime);
-                else if (cat.target != null)
-                {
-                    cat.target.remaining--;
-                    switch (cat.target.kind)
-                    {
-                        case Kind.Wood: wood++; break;
-                        case Kind.Stone: stone++; break;
-                        case Kind.Food: food++; break;
-                    }
-                    if (cat.target.remaining <= 0)
-                    {
-                        Destroy(cat.target.obj);
-                        resources.Remove(cat.target);
-                        cat.target = null;
-                    }
-                    else cat.target = null; // one resource per order
-                }
+                jobTimer = .7f;
+                foreach (var cat in cats) if (Idle(cat)) AssignJob(cat);
             }
+            foreach (var cat in cats) UpdateCat(cat);
             visionTimer -= Time.deltaTime;
             if (visionTimer <= 0)
             {
-                visionTimer = .25f;
-                positions.Clear();
-                foreach (var cat in cats)
-                {
-                    Vector3 p = world.transform.InverseTransformPoint(cat.obj.transform.position);
-                    positions.Add(new Vector2Int(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y)));
-                }
-                world.RevealFromUnits(positions, visionRadius);
-                UpdateResourceVisibility();
+                visionTimer = .3f;
+                vision.Clear();
+                foreach (var cat in cats) vision.Add(Cell(cat.obj.transform.position));
+                world.RevealFromUnits(vision, visionRadius);
+                foreach (var resource in resources)
+                    if (resource.obj != null)
+                        resource.obj.GetComponent<SpriteRenderer>().enabled =
+                            world.GetDiscoveryState(resource.cell.x, resource.cell.y) == DiscoveryState.Visible;
             }
         }
 
         private void Initialize()
         {
             initialized = true;
-            var rng = new System.Random(world.Seed ^ 98231);
-            var texture = new Texture2D(1, 1);
+            texture = new Texture2D(1, 1);
             texture.SetPixel(0, 0, Color.white);
             texture.Apply();
             sprite = Sprite.Create(texture, new Rect(0,0,1,1), new Vector2(.5f,.5f), 1f);
-            int cx = world.Width / 2, cy = world.Height / 2;
-            if (!FindLand(ref cx, ref cy)) { Debug.LogWarning("No land for colony"); return; }
-            if (cam != null)
-                cam.transform.position = new Vector3(cx, cy, cam.transform.position.z);
-            for (int i = 0; i < startingCats; i++)
+            int x = world.Width/2, y = world.Height/2;
+            if (!FindLand(ref x, ref y)) { Debug.LogError("No valid starting land."); return; }
+            stockpile = new Vector2Int(x,y);
+            if (cam != null) cam.transform.position = new Vector3(x,y,cam.transform.position.z);
+            MakeSprite("Stockpile",stockpile,new Color(.55f,.3f,.12f),1.2f,-.2f);
+            var rng = new System.Random(world.Seed ^ 98231);
+            for (int i=0; i<startingCats; i++)
             {
-                int x = cx + (i % 3) - 1, y = cy + i / 3;
-                if (!IsLand(x,y)) { x=cx; y=cy; }
-                var obj = MakeSprite("Cat_" + (i+1), x, y, new Color(.95f - i*.1f,.64f + i*.06f,.36f + i*.07f), .72f, -1);
-                cats.Add(new Cat { obj=obj, destination=obj.transform.position });
+                int px=x+(i%3)-1, py=y+(i/3)+1;
+                if (!Land(px,py)) {px=x;py=y;}
+                var color = Color.HSVToRGB((i*.173f+.06f)%1f,.4f,.95f);
+                var obj=MakeSprite("Cat_"+(i+1),new Vector2Int(px,py),color,.72f,-1f);
+                cats.Add(new Cat {obj=obj,color=color});
             }
-            for (int i = 0; i < resourceCount; i++)
+            for (int i=0; i<resourceCount; i++)
             {
-                int x=rng.Next(world.Width), y=rng.Next(world.Height);
-                if (!IsLand(x,y)) continue;
-                Kind kind = (Kind)rng.Next(3);
-                Color color = kind == Kind.Wood ? new Color(.13f,.35f,.13f) :
-                    kind == Kind.Stone ? Color.gray : new Color(.9f,.3f,.4f);
-                var obj=MakeSprite(kind+"_"+i,x,y,color,.58f,-.5f);
-                obj.GetComponent<SpriteRenderer>().enabled = false;
-                resources.Add(new Resource {obj=obj,kind=kind});
+                int rx=rng.Next(world.Width), ry=rng.Next(world.Height);
+                if (!Land(rx,ry) || (Mathf.Abs(rx-x)<3 && Mathf.Abs(ry-y)<3)) continue;
+                var kind=(Kind)rng.Next(3);
+                Color color=kind==Kind.Wood ? new Color(.13f,.35f,.13f) :
+                    kind==Kind.Stone ? Color.gray : new Color(.9f,.3f,.4f);
+                var cell=new Vector2Int(rx,ry);
+                var obj=MakeSprite(kind+"_"+i,cell,color,.58f,-.5f);
+                obj.GetComponent<SpriteRenderer>().enabled=false;
+                resources.Add(new Resource {obj=obj,kind=kind,cell=cell});
             }
-            Debug.Log("Purrville: cats and harvestable resources spawned.");
+            Debug.Log("Purrville v0.3: colony initialized. B = house blueprint; J = auto jobs.");
         }
 
-        private void UpdateResourceVisibility()
-        {
-            foreach (var resource in resources)
-            {
-                if (resource.obj == null) continue;
-                Vector3 p = world.transform.InverseTransformPoint(resource.obj.transform.position);
-                int x = Mathf.RoundToInt(p.x), y = Mathf.RoundToInt(p.y);
-                resource.obj.GetComponent<SpriteRenderer>().enabled =
-                    world.GetDiscoveryState(x, y) == DiscoveryState.Visible;
-            }
-        }
-
-        private bool IsLand(int x,int y)
-        {
-            return world.TryGetTerrain(x,y,out var type) && type != TerrainType.Water;
-        }
+        private bool Land(int x,int y) =>
+            world.TryGetTerrain(x,y,out var t) && t!=TerrainType.Water;
 
         private bool FindLand(ref int x,ref int y)
         {
-            if (IsLand(x,y)) return true;
-            for (int radius=1;radius<Mathf.Max(world.Width,world.Height);radius++)
-            for (int dy=-radius;dy<=radius;dy++)
-            for (int dx=-radius;dx<=radius;dx++)
-                if (IsLand(x+dx,y+dy)) {x+=dx;y+=dy;return true;}
+            if (Land(x,y)) return true;
+            for (int r=1;r<Mathf.Max(world.Width,world.Height);r++)
+            for (int dy=-r;dy<=r;dy++)
+            for (int dx=-r;dx<=r;dx++)
+                if (Land(x+dx,y+dy)) {x+=dx;y+=dy;return true;}
             return false;
         }
 
-        private GameObject MakeSprite(string name,int x,int y,Color color,float scale,float z)
+        private GameObject MakeSprite(string name,Vector2Int cell,Color color,float scale,float z)
         {
             var obj=new GameObject(name);
-            obj.transform.position=world.CellToWorld(x,y)+new Vector3(0,0,z);
+            obj.transform.position=world.CellToWorld(cell.x,cell.y)+new Vector3(0,0,z);
             obj.transform.localScale=Vector3.one*scale;
             var renderer=obj.AddComponent<SpriteRenderer>();
             renderer.sprite=sprite;
@@ -162,50 +154,166 @@ namespace Purrville.Colony
             return obj;
         }
 
+        private Vector2Int Cell(Vector3 pos)
+        {
+            var local=world.transform.InverseTransformPoint(pos);
+            return new Vector2Int(Mathf.RoundToInt(local.x),Mathf.RoundToInt(local.y));
+        }
+
+        private bool Move(Cat cat,Vector2Int target)
+        {
+            var path=GridPathfinder.Find(world,Cell(cat.obj.transform.position),target);
+            if (path==null) return false;
+            cat.path=path;
+            cat.pathIndex=0;
+            return true;
+        }
+
+        private bool Idle(Cat cat) => cat.target==null && !cat.carrying &&
+            cat.construction==null && (cat.path==null || cat.pathIndex>=cat.path.Count);
+
+        private void AssignJob(Cat cat)
+        {
+            foreach (var b in buildings)
+                if (!b.completed && wood>=12 && stone>=6)
+                {
+                    if (Move(cat,b.cell)) {cat.construction=b;return;}
+                }
+            Resource best=null;
+            int distance=int.MaxValue;
+            var current=Cell(cat.obj.transform.position);
+            foreach (var r in resources)
+            {
+                if (r.reserved || r.obj==null || world.GetDiscoveryState(r.cell.x,r.cell.y)!=DiscoveryState.Visible) continue;
+                int d=Mathf.Abs(current.x-r.cell.x)+Mathf.Abs(current.y-r.cell.y);
+                if (d<distance) {distance=d;best=r;}
+            }
+            if (best!=null && Move(cat,best.cell)) {cat.target=best;best.reserved=true;}
+        }
+
+        private void UpdateCat(Cat cat)
+        {
+            if (cat.path!=null && cat.pathIndex<cat.path.Count)
+            {
+                Vector2Int next=cat.path[cat.pathIndex];
+                Vector3 destination=world.CellToWorld(next.x,next.y)+new Vector3(0,0,-1);
+                cat.obj.transform.position=Vector3.MoveTowards(cat.obj.transform.position,destination,
+                    movementSpeed*Time.deltaTime);
+                if (Vector2.Distance(cat.obj.transform.position,destination)<.05f) cat.pathIndex++;
+                return;
+            }
+            if (cat.target!=null)
+            {
+                cat.workTimer+=Time.deltaTime;
+                if (cat.workTimer<.8f) return;
+                cat.workTimer=0;
+                cat.carriedKind=cat.target.kind;
+                cat.carrying=true;
+                cat.target.remaining--;
+                cat.target.reserved=false;
+                if (cat.target.remaining<=0)
+                {
+                    Destroy(cat.target.obj);
+                    resources.Remove(cat.target);
+                }
+                cat.target=null;
+                if (!Move(cat,stockpile)) cat.carrying=false;
+                return;
+            }
+            if (cat.carrying)
+            {
+                switch (cat.carriedKind)
+                {
+                    case Kind.Wood: wood++;break;
+                    case Kind.Stone: stone++;break;
+                    case Kind.Food: food++;break;
+                }
+                cat.carrying=false;
+            }
+            if (cat.construction!=null)
+            {
+                var b=cat.construction;
+                if (!b.completed && wood>=12 && stone>=6)
+                {
+                    b.progress+=Time.deltaTime;
+                    if (b.progress>=3f)
+                    {
+                        wood-=12;stone-=6;
+                        b.completed=true;
+                        b.obj.GetComponent<SpriteRenderer>().color=new Color(.75f,.45f,.28f);
+                        b.obj.name="House";
+                        Debug.Log("Purrville: house completed!");
+                    }
+                }
+                cat.construction=null;
+            }
+        }
+
+        private void PlaceHouse(Vector2Int cell)
+        {
+            if (!Land(cell.x,cell.y) || world.GetDiscoveryState(cell.x,cell.y)!=DiscoveryState.Visible) return;
+            foreach (var b in buildings) if (b.cell==cell) return;
+            var obj=MakeSprite("HouseBlueprint",cell,new Color(.3f,.75f,1f,.7f),1.3f,-.3f);
+            buildings.Add(new Building {obj=obj,cell=cell});
+            buildMode=false;
+        }
+
         private void HandleMouse()
         {
             if (cam==null || Mouse.current==null) return;
-            Vector2 pointer=Mouse.current.position.ReadValue();
-            Vector3 mouse=cam.ScreenToWorldPoint(new Vector3(pointer.x,pointer.y, -cam.transform.position.z));
+            Vector2 p=Mouse.current.position.ReadValue();
+            Vector3 point=cam.ScreenToWorldPoint(new Vector3(p.x,p.y,-cam.transform.position.z));
+            var cell=Cell(point);
             if (Mouse.current.leftButton.wasPressedThisFrame)
             {
-                Cat nearest=null; float best=.8f;
+                if (buildMode) {PlaceHouse(cell);return;}
+                Cat nearest=null;float best=.8f;
                 foreach (var cat in cats)
                 {
-                    float d=Vector2.Distance(mouse,cat.obj.transform.position);
+                    float d=Vector2.Distance(point,cat.obj.transform.position);
                     if (d<best) {best=d;nearest=cat;}
                 }
                 foreach (var cat in cats)
                 {
                     cat.selected=cat==nearest;
-                    cat.obj.GetComponent<SpriteRenderer>().color=cat.selected ? Color.yellow :
-                        new Color(.95f - cats.IndexOf(cat)*.1f,.64f + cats.IndexOf(cat)*.06f,.36f + cats.IndexOf(cat)*.07f);
+                    cat.obj.GetComponent<SpriteRenderer>().color=cat.selected?Color.yellow:cat.color;
                 }
             }
-            if (Mouse.current.rightButton.wasPressedThisFrame)
+            if (!Mouse.current.rightButton.wasPressedThisFrame) return;
+            Resource resource=null;float min=.85f;
+            foreach (var r in resources)
             {
-                Resource nearest=null; float best=.85f;
-                foreach (var resource in resources)
+                if (r.obj==null || world.GetDiscoveryState(r.cell.x,r.cell.y)!=DiscoveryState.Visible) continue;
+                float d=Vector2.Distance(point,r.obj.transform.position);
+                if (d<min) {min=d;resource=r;}
+            }
+            foreach (var cat in cats)
+            {
+                if (!cat.selected) continue;
+                if (cat.target!=null) cat.target.reserved=false;
+                cat.target=null;cat.construction=null;
+                if (cat.carrying) continue;
+                if (resource!=null && !resource.reserved && Move(cat,resource.cell))
                 {
-                    if (resource.obj==null) continue;
-                    float d=Vector2.Distance(mouse,resource.obj.transform.position);
-                    if (d<best) {best=d;nearest=resource;}
+                    cat.target=resource;resource.reserved=true;
                 }
-                foreach (var cat in cats)
-                    if (cat.selected)
-                    {
-                        cat.target=nearest;
-                        cat.destination=new Vector3(mouse.x,mouse.y,cat.obj.transform.position.z);
-                    }
+                else Move(cat,cell);
             }
         }
 
         private void OnGUI()
         {
             if (!initialized) return;
-            GUI.Box(new Rect(12,12,285,88),"Purrville — Colony Prototype");
-            GUI.Label(new Rect(22,38,270,22),$"Wood: {wood}   Stone: {stone}   Food: {food}");
-            GUI.Label(new Rect(22,62,270,22),"Left click: cat  |  Right click: order");
+            GUI.Box(new Rect(12,12,380,115),"Purrville — First Colony v0.3");
+            GUI.Label(new Rect(22,38,360,22),$"Wood: {wood}   Stone: {stone}   Food: {food}   Houses: {buildings.FindAll(b=>b.completed).Count}");
+            GUI.Label(new Rect(22,62,360,22),$"Auto jobs: {(automaticJobs?"ON":"OFF")} (J)   |   House blueprint: B");
+            GUI.Label(new Rect(22,85,360,22),buildMode?"CLICK on visible land to place a house":"Left click cat, right click to move/harvest");
+        }
+
+        private void OnDestroy()
+        {
+            if (sprite!=null) Destroy(sprite);
+            if (texture!=null) Destroy(texture);
         }
     }
 }
