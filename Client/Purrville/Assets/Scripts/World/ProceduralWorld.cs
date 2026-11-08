@@ -29,6 +29,7 @@ namespace Purrville.World
         private DiscoveryState[,] visibility;
         private GameObject generatedRoot;
         private Material terrainMaterial;
+        private Material fogMaterial;
         private readonly List<ChunkView> chunks = new List<ChunkView>();
         private Camera activeCamera;
         private Vector2Int lastCameraCell = new Vector2Int(int.MinValue, int.MinValue);
@@ -78,6 +79,9 @@ namespace Purrville.World
             generatedRoot = new GameObject("GeneratedWorld");
             generatedRoot.transform.SetParent(transform, false);
             terrainMaterial = new Material(Shader.Find("Sprites/Default"));
+            fogMaterial = new Material(Shader.Find("Sprites/Default"));
+            // Explicit transparent render queue; fog must draw over terrain.
+            fogMaterial.renderQueue = 3100;
             for (int y = 0; y < height; y += chunkSize)
             for (int x = 0; x < width; x += chunkSize)
                 BuildChunk(x, y, Mathf.Min(chunkSize, width - x), Mathf.Min(chunkSize, height - y));
@@ -131,14 +135,14 @@ namespace Purrville.World
 
             chunk.fogMesh = new Mesh { name = "FogMesh" };
             var fogVertices = (Vector3[])vertices.Clone();
-            for (int v = 0; v < fogVertices.Length; v++) fogVertices[v].z = -.1f;
+            for (int v = 0; v < fogVertices.Length; v++) fogVertices[v].z = -0.1f;
             chunk.fogMesh.vertices = fogVertices;
             chunk.fogMesh.uv = uv;
             chunk.fogMesh.triangles = triangles;
             chunk.fogMesh.colors = chunk.fogColors;
             chunk.fogMesh.RecalculateBounds();
             fogObject.AddComponent<MeshFilter>().sharedMesh = chunk.fogMesh;
-            fogObject.AddComponent<MeshRenderer>().sharedMaterial = terrainMaterial;
+            fogObject.AddComponent<MeshRenderer>().sharedMaterial = fogMaterial;
             fogObject.SetActive(fogOfWar);
             chunks.Add(chunk);
         }
@@ -267,6 +271,7 @@ namespace Purrville.World
             chunks.Clear();
             if (generatedRoot != null) Destroy(generatedRoot);
             if (terrainMaterial != null) Destroy(terrainMaterial);
+            if (fogMaterial != null) Destroy(fogMaterial);
         }
 
         private void OnDestroy() => ClearGenerated();
