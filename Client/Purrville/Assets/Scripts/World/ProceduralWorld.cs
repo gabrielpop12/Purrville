@@ -50,6 +50,7 @@ namespace Purrville.World
         public int Width => width;
         public int Height => height;
         public bool IsGenerated => terrain != null;
+        public bool IsDiscovered(int x, int y) => discovered != null && x >= 0 && y >= 0 && x < width && y < height && discovered[x,y];
         public Vector3 CellToWorld(int x, int y) => transform.TransformPoint(new Vector3(x, y, 0));
 
         private void Start()
