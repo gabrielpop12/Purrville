@@ -20,7 +20,7 @@ namespace Purrville.World
 
         [Header("Exploration prototype")]
         [SerializeField] private bool fogOfWar = true;
-        [SerializeField] private bool revealAroundCameraForTesting = true;
+        [SerializeField] private bool revealAroundCameraForTesting = false;
         [SerializeField, Range(2, 20)] private int revealRadius = 8;
         [SerializeField, Range(0f, 1f)] private float exploredDarkness = .58f;
 
@@ -47,6 +47,8 @@ namespace Purrville.World
         public int Seed => seed;
         public int Width => width;
         public int Height => height;
+        public bool IsGenerated => terrain != null;
+        public Vector3 CellToWorld(int x, int y) => transform.TransformPoint(new Vector3(x, y, 0));
 
         private void Start()
         {
@@ -204,6 +206,21 @@ namespace Purrville.World
                     discovered[x, y] = true;
                     visibility[x, y] = DiscoveryState.Visible;
                 }
+            RefreshFog();
+        }
+
+        public void RevealFromUnits(IReadOnlyList<Vector2Int> positions, int radius)
+        {
+            if (visibility == null) return;
+            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                visibility[x,y] = discovered[x,y] ? DiscoveryState.Explored : DiscoveryState.Unknown;
+            int r2 = radius * radius;
+            foreach (var p in positions)
+            for (int y = Mathf.Max(0,p.y-radius); y <= Mathf.Min(height-1,p.y+radius); y++)
+            for (int x = Mathf.Max(0,p.x-radius); x <= Mathf.Min(width-1,p.x+radius); x++)
+                if ((x-p.x)*(x-p.x)+(y-p.y)*(y-p.y)<=r2)
+                { discovered[x,y]=true; visibility[x,y]=DiscoveryState.Visible; }
             RefreshFog();
         }
 
